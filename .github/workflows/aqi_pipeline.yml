@@ -135,17 +135,26 @@ jobs:
         id: check_rmse
         run: |
           python - <<'PYEOF'
-          import joblib, json, pathlib, sys
+          import os, joblib, pathlib, sys
           info_path = pathlib.Path("models/best_model_info.pkl")
           if not info_path.exists():
               print("No model info found, skipping RMSE check")
               sys.exit(0)
           info = joblib.load(info_path)
           rmse = info["metrics"]["rmse"]
-          print(f"Current model RMSE: {rmse:.4f}")
+          mae  = info["metrics"].get("mae", 0.0)
+          r2   = info["metrics"].get("r2", 0.0)
+          model_name = info.get("model_name", "unknown")
+          print(f"Best model : {model_name}")
+          print(f"RMSE       : {rmse:.4f}")
+          print(f"MAE        : {mae:.4f}")
+          print(f"R²         : {r2:.4f}")
           # Write to GitHub output
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"rmse={rmse:.4f}\n")
+          github_output = os.environ.get("GITHUB_OUTPUT", "")
+          if github_output:
+              with open(github_output, "a") as f:
+                  f.write(f"rmse={rmse:.4f}\n")
+                  f.write(f"model_name={model_name}\n")
           PYEOF
         env:
           PYTHONPATH: .

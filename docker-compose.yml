@@ -1,0 +1,131 @@
+---
+# Apache Airflow local development setup
+# Uses the official Airflow image with LocalExecutor + PostgreSQL
+#
+# Usage:
+#   docker-compose up -d          # start all services
+#   docker-compose down           # stop and remove containers
+#   docker-compose down -v        # also remove volumes (wipes database)
+#
+# Access:
+#   Airflow Web UI : http://localhost:8080  (admin / admin)
+#   Default creds set via AIRFLOW_ADMIN_* environment variables
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.1-python3.10
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    # Project-specific secrets — override with a .env file or Docker secrets
+    AQICN_KEY: ${AQICN_KEY:-your_aqicn_key_here}
+    OPENWEATHER_KEY: ${OPENWEATHER_KEY:-your_openweather_key_here}
+    HOPSWORKS_KEY: ${HOPSWORKS_KEY:-}
+    HOPSWORKS_PROJECT: ${HOPSWORKS_PROJECT:-aqi_faisalabad}
+    HOPSWORKS_HOST: ${HOPSWORKS_HOST:-c.app.hopsworks.ai}
+    DEFAULT_CITY: ${DEFAULT_CITY:-Faisalabad}
+    CITY_LAT: ${CITY_LAT:-31.4504}
+    CITY_LON: ${CITY_LON:-73.1350}
+    ALERT_EMAIL: ${ALERT_EMAIL:-admin@example.com}
+    MLFLOW_TRACKING_URI: /opt/airflow/mlruns
+    PYTHONPATH: /opt/airflow/project
+  volumes:
+    - .:/opt/airflow/project          # mount entire project
+    - ./dags:/opt/airflow/dags        # DAG files
+    - ./logs:/opt/airflow/logs        # Airflow task logs
+    - ./models:/opt/airflow/project/models
+    - ./data:/opt/airflow/project/data
+    - airflow-plugins:/opt/airflow/plugins
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+
+services:
+
+  # ── PostgreSQL metadata database ────────────────────────────────────────────
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  # ── Airflow database initialisation (runs once) ────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        pip install -r /opt/airflow/project/requirements.txt --quiet
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com \
+          --password admin
+        echo "Airflow initialised successfully"
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+    user: "0:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Airflow webserver ──────────────────────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ── Airflow scheduler ──────────────────────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-db-volume:
+  airflow-plugins:
