@@ -1,0 +1,4 @@
+# Airflow – Linux/Docker ONLY (not supported on Windows)
+# Deploy to a Linux server or use: docker run apache/airflow
+# The GitHub Actions workflow handles scheduling instead on Windows.
+apache-airflow==2.8.1

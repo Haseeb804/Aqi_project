@@ -1,0 +1,236 @@
+name: AQI ML Pipeline
+
+# ── Triggers ──────────────────────────────────────────────────────────────────
+on:
+  # Feature pipeline: every hour; Training pipeline: daily at midnight UTC
+  schedule:
+    - cron: "0 * * * *"        # feature pipeline – every hour
+    - cron: "0 0 * * *"        # training pipeline – daily at 00:00 UTC
+
+  # Manual trigger for backfill or re-training
+  workflow_dispatch:
+    inputs:
+      run_type:
+        description: "Which job to run"
+        required: true
+        default: "feature"
+        type: choice
+        options:
+          - feature
+          - training
+          - backfill
+      backfill_start:
+        description: "Backfill start date (YYYY-MM-DD) – required when run_type=backfill"
+        required: false
+        default: "2022-01-01"
+      backfill_end:
+        description: "Backfill end date (YYYY-MM-DD)"
+        required: false
+        default: "2024-01-01"
+      city:
+        description: "City name for backfill"
+        required: false
+        default: "Faisalabad"
+
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "utils/**"
+      - "requirements.txt"
+
+# ── Concurrency: cancel stale runs, but allow training to finish ───────────────
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# ── Shared env ────────────────────────────────────────────────────────────────
+env:
+  PYTHON_VERSION: "3.10"
+
+# ── Jobs ──────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ── 1. Feature pipeline (hourly cron or manual) ───────────────────────────
+  feature-pipeline:
+    name: Feature Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'feature')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run feature pipeline
+        env:
+          AQICN_KEY:        ${{ secrets.AQICN_KEY }}
+          OPENWEATHER_KEY:  ${{ secrets.OPENWEATHER_KEY }}
+          HOPSWORKS_KEY:    ${{ secrets.HOPSWORKS_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+        run: python -m src.feature_pipeline
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-pipeline-logs-${{ github.run_id }}
+          path: logs/feature_pipeline.log
+          retention-days: 7
+
+      - name: Notify failure via Slack
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": ":rotating_light: *AQI Feature Pipeline FAILED*\nRepo: ${{ github.repository }}\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  # ── 2. Training pipeline (daily at midnight UTC) ──────────────────────────
+  training-pipeline:
+    name: Training Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 0 * * *')  ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'training') ||
+      (github.event_name == 'push')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run training pipeline
+        env:
+          AQICN_KEY:         ${{ secrets.AQICN_KEY }}
+          OPENWEATHER_KEY:   ${{ secrets.OPENWEATHER_KEY }}
+          HOPSWORKS_KEY:     ${{ secrets.HOPSWORKS_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+          MLFLOW_TRACKING_URI: ./mlruns
+        run: python -m src.training_pipeline
+
+      - name: Check RMSE improvement and re-register
+        id: check_rmse
+        run: |
+          python - <<'PYEOF'
+          import joblib, json, pathlib, sys
+          info_path = pathlib.Path("models/best_model_info.pkl")
+          if not info_path.exists():
+              print("No model info found, skipping RMSE check")
+              sys.exit(0)
+          info = joblib.load(info_path)
+          rmse = info["metrics"]["rmse"]
+          print(f"Current model RMSE: {rmse:.4f}")
+          # Write to GitHub output
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"rmse={rmse:.4f}\n")
+          PYEOF
+        env:
+          PYTHONPATH: .
+
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-artifacts-${{ github.run_id }}
+          path: |
+            models/
+            logs/training.log
+          retention-days: 30
+
+      - name: Notify failure via Slack
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": ":rotating_light: *AQI Training Pipeline FAILED* (RMSE target not met or error)\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Notify success with RMSE
+        if: success()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": ":white_check_mark: *AQI Training Pipeline SUCCEEDED* – RMSE=${{ steps.check_rmse.outputs.rmse }}\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  # ── 3. Backfill (manual only) ─────────────────────────────────────────────
+  backfill:
+    name: Backfill Historical Data
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'backfill'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backfill
+        env:
+          AQICN_KEY:         ${{ secrets.AQICN_KEY }}
+          OPENWEATHER_KEY:   ${{ secrets.OPENWEATHER_KEY }}
+          HOPSWORKS_KEY:     ${{ secrets.HOPSWORKS_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+        run: |
+          python -m src.backfill_pipeline \
+            --city "${{ github.event.inputs.city }}" \
+            --start "${{ github.event.inputs.backfill_start }}" \
+            --end   "${{ github.event.inputs.backfill_end }}"
+
+      - name: Upload backfill output
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-data-${{ github.run_id }}
+          path: |
+            data/aqi_features.parquet
+            logs/backfill.log
+          retention-days: 30
+
+      - name: Notify failure via Slack
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": ":rotating_light: *AQI Backfill FAILED*\nCity: ${{ github.event.inputs.city }}, Range: ${{ github.event.inputs.backfill_start }} – ${{ github.event.inputs.backfill_end }}\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

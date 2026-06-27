@@ -1,0 +1,66 @@
+# Environment variables (NEVER commit secrets)
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Data files (usually too large for GitHub)
+data/raw/
+data/processed/
+*.csv
+*.parquet
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+
+# Model artifacts (large binary files)
+models/*.pkl
+models/*.joblib
+models/*.bin
+models/*.pt
+models/*.pth
+
+# MLflow runs (can be very large)
+mlruns/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Airflow
+airflow.cfg
+airflow.db
+standalone_admin_password.txt
+
+# Refact
+.refact/
