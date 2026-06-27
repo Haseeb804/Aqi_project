@@ -1,0 +1,12 @@
+{
+  "// comment": "DAG files only run inside the Docker/Airflow container environment.",
+  "// comment2": "Airflow is not installed in the local Python interpreter, so",
+  "// comment3": "Pyrefly/Pyright reports false-positive missing-import errors for those files.",
+  "ignore": [
+    "dags/**"
+  ],
+  "reportMissingModuleSource": "none",
+  "reportMissingImports": "warning",
+  "pythonVersion": "3.10",
+  "typeCheckingMode": "basic"
+}
