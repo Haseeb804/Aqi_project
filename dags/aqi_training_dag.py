@@ -23,9 +23,9 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from airflow import DAG
-from airflow.operators.python import PythonOperator, ShortCircuitOperator
-from airflow.operators.email import EmailOperator
+from airflow import DAG  # type: ignore[import-untyped]
+from airflow.operators.python import PythonOperator, ShortCircuitOperator  # type: ignore[import-untyped]
+from airflow.operators.email import EmailOperator  # type: ignore[import-untyped]
 
 log = logging.getLogger(__name__)
 
