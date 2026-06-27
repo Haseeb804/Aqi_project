@@ -387,14 +387,24 @@ def eda_correlation_fig(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _hex_to_rgba(hex_color: str, alpha: float = 0.2) -> str:
+    """Convert '#RRGGBB' to 'rgba(R,G,B,alpha)' for Plotly."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def eda_pollutant_ts_fig(df: pd.DataFrame, pollutant: str) -> go.Figure:
     sample = df.sort_values("timestamp_utc").tail(720)
     ts = pd.to_datetime(sample["timestamp_utc"])
-    pol_labels = {"pm25": "PM2.5 (μg/m³)", "pm10": "PM10 (μg/m³)",
-                  "no2": "NO₂ (μg/m³)", "o3": "O₃ (μg/m³)",
-                  "co": "CO (μg/m³)", "so2": "SO₂ (μg/m³)"}
+    pol_labels = {"pm25": "PM2.5 (ug/m3)", "pm10": "PM10 (ug/m3)",
+                  "no2": "NO2 (ug/m3)", "o3": "O3 (ug/m3)",
+                  "co": "CO (ug/m3)", "so2": "SO2 (ug/m3)"}
     colors = {"pm25": "#2196F3", "pm10": "#FF9800", "no2": "#4CAF50",
               "o3": "#9C27B0", "co": "#F44336", "so2": "#00BCD4"}
+
+    line_color = colors.get(pollutant, "#2196F3")
+    fill_color = _hex_to_rgba(line_color, alpha=0.2)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -402,11 +412,11 @@ def eda_pollutant_ts_fig(df: pd.DataFrame, pollutant: str) -> go.Figure:
         mode="lines",
         fill="tozeroy",
         name=pol_labels.get(pollutant, pollutant),
-        line={"color": colors.get(pollutant, "#2196F3"), "width": 1.2},
-        fillcolor=colors.get(pollutant, "#2196F3").replace("#", "rgba(") + ",0.2)",
+        line={"color": line_color, "width": 1.2},
+        fillcolor=fill_color,
     ))
     fig.update_layout(
-        title=f"{pol_labels.get(pollutant, pollutant)} – Last 30 Days",
+        title=f"{pol_labels.get(pollutant, pollutant)} - Last 30 Days",
         xaxis_title="Date", yaxis_title=pol_labels.get(pollutant, pollutant),
         plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
         font_color="#FAFAFA", height=320,
