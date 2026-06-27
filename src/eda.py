@@ -25,6 +25,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# Fix Windows cp1252 terminal encoding so Unicode chars (arrows, etc.) print correctly
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf-8-sig"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except AttributeError:
+        pass  # Python < 3.7 fallback
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -372,9 +379,9 @@ def plot_pollutant_timeseries(df: pd.DataFrame, out_dir: Path) -> None:
     fig.suptitle("Pollutant Concentrations (Last 30 Days)", fontsize=14, fontweight="bold")
 
     colors = PALETTE[:n]
-    labels = {"pm25": "PM2.5 (μg/m³)", "pm10": "PM10 (μg/m³)",
-              "no2": "NO₂ (μg/m³)", "o3": "O₃ (μg/m³)",
-              "co": "CO (μg/m³)", "so2": "SO₂ (μg/m³)"}
+    labels = {"pm25": "PM2.5 (ug/m3)", "pm10": "PM10 (ug/m3)",
+              "no2": "NO2 (ug/m3)", "o3": "O3 (ug/m3)",
+              "co": "CO (ug/m3)", "so2": "SO2 (ug/m3)"}
 
     for ax, pol, color in zip(axes, avail_pollutants, colors):
         ax.fill_between(ts, sample[pol], alpha=0.4, color=color)
@@ -476,12 +483,12 @@ def print_summary_stats(df: pd.DataFrame) -> None:
     """Print descriptive statistics to console."""
     cols = ["aqi"] + [p for p in POLLUTANTS if p in df.columns]
     print("\n" + "=" * 65)
-    print("  EDA SUMMARY STATISTICS – FAISALABAD AQI DATASET")
+    print("  EDA SUMMARY STATISTICS - FAISALABAD AQI DATASET")
     print("=" * 65)
     print(f"  Total rows     : {len(df):,}")
-    print(f"  Date range     : {df['timestamp_utc'].min()} → {df['timestamp_utc'].max()}")
+    print(f"  Date range     : {df['timestamp_utc'].min()} -> {df['timestamp_utc'].max()}")
     print(f"  Cities         : {df['city'].unique().tolist()}")
-    print(f"\n  Pollutant & AQI Descriptive Statistics:")
+    print("\n  Pollutant & AQI Descriptive Statistics:")
     print(df[cols].describe().round(2).to_string())
     print("\n  AQI Category Breakdown:")
     df2 = _add_aqi_category(df)
